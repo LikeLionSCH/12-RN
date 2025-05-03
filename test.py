@@ -112,25 +112,25 @@ class MiniChessEnv(gym.Env):
     
     def get_kr_from_pid(self, pid):
         if pid == 0:
-            return "상"
+            return "장(상)"
         elif pid == 1:
-            return "왕"
+            return "왕(상)"
         elif pid == 2:
-            return "상"
+            return "상(상)"
         elif pid == 3:
-            return "자"
+            return "자(상)"
         elif pid == 4:
-            return "후"
+            return "후(상)"
         elif pid == 5:
-            return "자"
+            return "자(하)"
         elif pid == 6:
-            return "상"
+            return "상(하)"
         elif pid == 7:
-            return "왕"
+            return "왕(하)"
         elif pid == 8:
-            return "장"
+            return "장(히)"
         elif pid == 9:
-            return "후"
+            return "후(하)"
         else:
             return None
 
@@ -234,8 +234,8 @@ env = gym.make("MiniChess-v0")
 env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 
 # MaskablePPO 모델 불러오기
-model_1 = MaskablePPO.load("./12")
-model_2 = MaskablePPO.load("./12")
+model_1 = MaskablePPO.load("./new2_0")
+model_2 = MaskablePPO.load("./new2_1")
 
 ## 모델 테스트
 num_episodes = 10  # 테스트할 에피소드 수
@@ -254,7 +254,7 @@ for ep in range(num_episodes):
         if obs["turn"] == 0:
             action, _states = model_1.predict(obs, action_masks=action_mask, deterministic=True)
         else :
-            action, _states = model_1.predict(obs, action_masks=action_mask, deterministic=True)
+            action, _states = model_2.predict(obs, action_masks=action_mask, deterministic=True)
         obs, reward, terminated, truncated, info = env.step(action)
         laObs = obs
         done = terminated or truncated
@@ -262,6 +262,15 @@ for ep in range(num_episodes):
 
     print(f"Episode {ep+1}: Total Reward = {episode_reward}")
 
+import torch
+# 모델 로드
+model = MaskablePPO.load("new2_1.zip")
+
+# 모델을 PyTorch 형태로 변환
+dummy_input = torch.randn(1, model.policy.observation_space.shape)
+print(model.policy.observation_space.shape)
+
+torch.onnx.export(model.policy, dummy_input, "new2_1.onnx", opset_version=11)
 
 env.close()
 

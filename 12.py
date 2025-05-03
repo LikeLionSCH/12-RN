@@ -2,6 +2,18 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.wrappers import ActionMasker
+
+
+# 환경 등록 (이 환경은 __main__ 모듈에 정의되어 있다고 가정)
+gym.register(
+    id="MiniChess-v0",
+    entry_point="__main__:MiniChessEnv"
+)
+
+user = 1 # 1 or 0
+
 class MiniChessEnv(gym.Env):
     """8×3 크기의 체스 유사 게임 환경 (차례 정보 포함)"""
     
@@ -79,27 +91,29 @@ class MiniChessEnv(gym.Env):
         
         targetPid = self.get_piece_id(target_row, target_col)
         if valid_move and targetPid == 1:
-            reward += 500
+            reward += 500 if user == 0 else -500
         elif valid_move and targetPid == 7:
-            reward -= 500
+            reward += -500 if user == 0 else 500
         
         if targetPid != -1:
             self.board[targetPid, target_row, target_col] = 0
 
-        # 이동 적용: 올바른 이동일 때만 기물을 옮기고 차례 변경
-        if valid_move:
-            self.board[piece_id, start_row, start_col] = 0
-            self.board[piece_id, target_row, target_col] = 1
-            self.turn = 1 - self.turn
+        # 이동 적용
+        self.board[piece_id, start_row, start_col] = 0
+        self.board[piece_id, target_row, target_col] = 1
+        self.turn = 1 - self.turn
 
-        else:
-            # 불법 이동 시, 차례 변경을 원하지 않을 수도 있음. (디자인에 따라 다름)
-            reward = -1
-        
+        obs = {"board": self.board, "turn": self.turn}
+        #상대 기물 이동
+        if self.turn == user:
+            action_mask = embedded_env.unwrapped.get_valid_actions()
+            action, _states = embedded_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
+            obs, reward, terminated, truncated, info = env.step(action)
+            self.turn = 1 - self.turn
         self.time += 1
         done = self.is_over()  # 종료조건
         
-        return {"board": self.board, "turn": self.turn}, reward, done, False, {}
+        return obs, reward, done, False, {}
     
     def get_piece_id(self, row, col):
         for pid in range(self.num_pieces):
@@ -188,25 +202,21 @@ class MiniChessEnv(gym.Env):
                 valid_mask[action] = True
         return valid_mask
         
+
+
+embedded_env = gym.make("MiniChess-v0")
+embedded_env = ActionMasker(embedded_env, lambda env: env.unwrapped.get_valid_actions())
+embedded_model = MaskablePPO.load("./new2_0", env=embedded_env)
+
     
-# 환경 등록 (이 환경은 __main__ 모듈에 정의되어 있다고 가정)
-gym.register(
-    id="MiniChess-v0",
-    entry_point="__main__:MiniChessEnv"
-)
-
-
-from sb3_contrib import MaskablePPO
-from sb3_contrib.common.wrappers import ActionMasker
-
-
 env = gym.make("MiniChess-v0")
 
 env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 # MultiInputPolicy를 사용하여 모델 생성
 model = MaskablePPO("MultiInputPolicy", env, verbose=1)
 
-model.learn(total_timesteps=10_000)
-model.save("./12")
+model.learn(total_timesteps=100_000)
+model.save("./new2_" + str(user))
 
-
+from stable_baselines3.common.onnx_utils import export_onnx
+export_onnx(model.policy, "new2_"+ str(user) +".onnx", opset_version=11)
