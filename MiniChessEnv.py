@@ -1,18 +1,12 @@
 import gymnasium as gym
-import numpy as np
 from gymnasium import spaces
-
-from sb3_contrib import MaskablePPO
-from sb3_contrib.common.wrappers import ActionMasker
-
+import numpy as np
 
 # 환경 등록 (이 환경은 __main__ 모듈에 정의되어 있다고 가정)
 gym.register(
     id="MiniChess-v0",
-    entry_point="__main__:MiniChessEnv"
+    entry_point="MiniChessEnv:MiniChessEnv"
 )
-
-user = 1 # 1 or 0
 
 class MiniChessEnv(gym.Env):
     """8×3 크기의 체스 유사 게임 환경 (차례 정보 포함)"""
@@ -33,7 +27,25 @@ class MiniChessEnv(gym.Env):
         # 행동 공간: 가능한 모든 출발지-도착지 (총 8*3*8*3 개)
         self.action_space = spaces.Discrete(8 * 3 * 8 * 3)
         self.time = 0
+        self.is_test_mode = False
+
+        # 학습시 상대 모델 적용
+        self.embedded_env = None
+        self.embedded_model = None
+        self.user = None
+
         self.reset()
+        
+    def set_test_mode(self, is_test_mode):
+        """테스트 모드 설정"""
+        self.is_test_mode = is_test_mode
+
+    def set_embedded_env(self, env, model, user):
+        """상대 모델 설정"""
+        self.embedded_env = env
+        self.embedded_model = model
+        self.user = user
+    
     
     def reset(self, seed=None, options=None):
         """게임 초기화 및 초기 관측 반환"""
@@ -46,7 +58,7 @@ class MiniChessEnv(gym.Env):
         self.board[1, 2, 1] = 1  # 상단 왕 배치 / id: 1
         self.board[2, 2, 2] = 1  # 상단 상 배치 / id: 2
         self.board[3, 3, 1] = 1  # 상단 자 배치 / id: 3
-        #상단 후 / id: 4
+        # 상단 후 / id: 4
         
         self.board[5, 4, 1] = 1  # 하단 자 배치 / id: 5
         self.board[6, 5, 0] = 1  # 하단 상 배치 / id: 6
@@ -54,27 +66,22 @@ class MiniChessEnv(gym.Env):
         self.board[8, 5, 2] = 1  # 상단 장 배치 / id: 8
         # 하단 후 / id: 9
         
-        
         # 차례 정보 초기화 (0번 플레이어부터 시작)
         self.turn = 0
         self.time = 0
         
         return {"board": self.board, "turn": self.turn}, {}
-
-
+    
     def step(self, action):
         """
         행동(action)은 0부터 8*3*8*3-1 까지의 정수라고 가정합니다.
         여기에서는 간단히 출발 위치와 도착 위치로 해석합니다.
         """
-        # 예제: action을 출발지와 목표지 인덱스로 분할 (총 24칸)
         start_index = action // (8 * 3)
         target_index = action % (8 * 3)
         start_row, start_col = divmod(start_index, 3)
         target_row, target_col = divmod(target_index, 3)
         
-        # 시작 위치에 현재 차례의 플레이어 소유 기물이 있는지 확인
-        # (여기서는 단순화를 위해, board의 각 칸에는 단 하나의 기물만 있다고 가정)
         piece_found = False
         piece_id = None
         
@@ -87,13 +94,18 @@ class MiniChessEnv(gym.Env):
         if piece_found:
             valid_move = self.validate_move(piece_id, (start_row, start_col), (target_row, target_col))
         
+        if self.is_test_mode:
+            print("action:", action)
+            print(start_row, start_col, "에서", target_row, target_col, "로 이동")
+            print("기물:", self.get_kr_from_pid(piece_id))
+
         reward = self.time * -1
         
         targetPid = self.get_piece_id(target_row, target_col)
         if valid_move and targetPid == 1:
-            reward += 500 if user == 0 else -500
+            reward += 500 if self.user == 0 else -500
         elif valid_move and targetPid == 7:
-            reward += -500 if user == 0 else 500
+            reward += -500 if self.user == 0 else 500
         
         if targetPid != -1:
             self.board[targetPid, target_row, target_col] = 0
@@ -104,13 +116,15 @@ class MiniChessEnv(gym.Env):
         self.turn = 1 - self.turn
 
         obs = {"board": self.board, "turn": self.turn}
-        #상대 기물 이동
-        if self.turn == user:
-            action_mask = embedded_env.unwrapped.get_valid_actions()
-            action, _states = embedded_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
+
+        # 상대 기물 이동
+        if self.is_test_mode and self.turn == self.user :
+            action_mask = self.embedded_env.unwrapped.get_valid_actions()
+            action, _states = self.embedded_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
             obs, reward, terminated, truncated, info = env.step(action)
             self.turn = 1 - self.turn
         self.time += 1
+
         done = self.is_over()  # 종료조건
         
         return obs, reward, done, False, {}
@@ -120,14 +134,13 @@ class MiniChessEnv(gym.Env):
             if self.board[pid, row, col] == 1:
                 return pid
         return -1
-
-
+    
     def validate_move(self, piece_id, start_pos, target_pos):
         """기물별 이동 규칙 검증 """
         row_diff = abs(target_pos[0] - start_pos[0])
         col_diff = abs(target_pos[1] - start_pos[1])
         
-        if target_pos[0] < 2 or target_pos[0] > 5: # 잡은 기물 칸으론 이둥 볼가
+        if target_pos[0] < 2 or target_pos[0] > 5:
             return False
         
         if piece_id <= 4 and self.turn == 0:
@@ -137,37 +150,32 @@ class MiniChessEnv(gym.Env):
             return False
         
         targetPid = self.get_piece_id(target_pos[0], target_pos[1])
-        if targetPid > -1 :
+        if targetPid > -1:
             if targetPid <= 4 and piece_id <= 4:
                 return False
             elif targetPid >= 5 and piece_id >= 5:
                 return False
         
-        if piece_id == 0:  # id: 0 - 장 : 상하좌우 이동
+        if piece_id == 0:  # 장: 상하좌우 이동
             return (row_diff == 0 and col_diff == 1) or (col_diff == 0 and row_diff == 1)
-        elif piece_id == 1:  # id: 1 - 왕 : 상하좌우 대각선 이동
-            return (row_diff == 0 and col_diff == 1) or (col_diff == 0 and row_diff == 1) or \
-                   (row_diff == 1 and col_diff == 1)
-        elif piece_id == 2:  # id: 2 - 상 : 대각선 이동
+        elif piece_id == 1:  # 왕: 상하좌우 대각선 이동
+            return (row_diff == 0 and col_diff == 1) or (col_diff == 0 and row_diff == 1) or (row_diff == 1 and col_diff == 1)
+        elif piece_id == 2:  # 상: 대각선 이동
             return (row_diff == 1 and col_diff == 1)
-        elif piece_id == 3:  # id: 3 - 자 : 아래로 한칸 이동
+        elif piece_id == 3:  # 자: 아래로 한 칸 이동
             return (row_diff == 1 and col_diff == 0) and target_pos[0] > start_pos[0]
-        elif piece_id == 4:  # id: 4 - 후 : 위로 대각 빼고 다 한칸 이동 가능
-            return (row_diff == 1 and col_diff == 0) or (col_diff == 1 and row_diff == 0) or \
-                   (row_diff == 1 and col_diff == 1 and target_pos[0] > start_pos[0])
-                   
-        elif piece_id == 5:  # id: 5 - 자 : 아래로 한칸 이동
+        elif piece_id == 4:  # 후: 위로 대각 빼고 한 칸 이동
+            return (row_diff == 1 and col_diff == 0) or (col_diff == 1 and row_diff == 0) or (row_diff == 1 and col_diff == 1 and target_pos[0] > start_pos[0])
+        elif piece_id == 5:  # 자: 아래로 한 칸 이동
             return (row_diff == 1 and col_diff == 0) and target_pos[0] < start_pos[0]
-        elif piece_id == 6:  # id: 6 - 상 : 대각선 이동
+        elif piece_id == 6:  # 상: 대각선 이동
             return (row_diff == 1 and col_diff == 1)
-        elif piece_id == 7:  # id: 7 - 왕 : 상하좌우 대각선 이동
-            return (row_diff == 0 and col_diff == 1) or (col_diff == 0 and row_diff == 1) or \
-                   (row_diff == 1 and col_diff == 1)
-        elif piece_id == 8:  # id: 8 - 장 : 상하좌우 이동
+        elif piece_id == 7:  # 왕: 상하좌우 대각선 이동
+            return (row_diff == 0 and col_diff == 1) or (col_diff == 0 and row_diff == 1) or (row_diff == 1 and col_diff == 1)
+        elif piece_id == 8:  # 장: 상하좌우 이동
             return (row_diff == 0 and col_diff == 1) or (col_diff == 0 and row_diff == 1)
-        elif piece_id == 9:  # id: 9 - 후 : 위로 대각 빼고 다 한칸 이동 가능
-            return (row_diff == 1 and col_diff == 0) or (col_diff == 1 and row_diff == 0) or \
-                   (row_diff == 1 and col_diff == 1 and target_pos[0] < start_pos[0])
+        elif piece_id == 9:  # 후: 위로 대각 빼고 한 칸 이동
+            return (row_diff == 1 and col_diff == 0) or (col_diff == 1 and row_diff == 0) or (row_diff == 1 and col_diff == 1 and target_pos[0] < start_pos[0])
         return False
     
     def is_over(self):
@@ -176,14 +184,13 @@ class MiniChessEnv(gym.Env):
         king_white_id = 1  # 백 왕 ID (예제)
         king_black_id = 7  # 흑 왕 ID (예제)
     
-        white_king_exists = (self.board[king_white_id] == 1).any()  # 백 왕이 있는지 확인
-        black_king_exists = (self.board[king_black_id] == 1).any()  # 흑 왕이 있는지 확인
+        white_king_exists = (self.board[king_white_id] == 1).any()
+        black_king_exists = (self.board[king_black_id] == 1).any()
     
-        # 둘 중 하나라도 사라졌으면 게임 종료
         return not (white_king_exists and black_king_exists) 
         
     def get_valid_actions(self):
-        """현재 보드 상태 기준으로, 가능한 모든 행동(0~action_space.n-1)에 대해 유효성 마스크를 반환합니다."""
+        """현재 보드 상태 기준으로 가능한 모든 행동에 대해 유효성 마스크를 반환합니다."""
         valid_mask = np.zeros(self.action_space.n, dtype=bool)
         for action in range(self.action_space.n):
             start_index = action // (8 * 3)
@@ -201,22 +208,27 @@ class MiniChessEnv(gym.Env):
             if piece_found and self.validate_move(piece_id, (start_row, start_col), (target_row, target_col)):
                 valid_mask[action] = True
         return valid_mask
-        
 
-
-embedded_env = gym.make("MiniChess-v0")
-embedded_env = ActionMasker(embedded_env, lambda env: env.unwrapped.get_valid_actions())
-embedded_model = MaskablePPO.load("./new2_0", env=embedded_env)
-
-    
-env = gym.make("MiniChess-v0")
-
-env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
-# MultiInputPolicy를 사용하여 모델 생성
-model = MaskablePPO("MultiInputPolicy", env, verbose=1)
-
-model.learn(total_timesteps=100_000)
-model.save("./new2_" + str(user))
-
-from stable_baselines3.common.onnx_utils import export_onnx
-export_onnx(model.policy, "new2_"+ str(user) +".onnx", opset_version=11)
+    def get_kr_from_pid(self, pid):
+        if pid == 0:
+            return "장(상)"
+        elif pid == 1:
+            return "왕(상)"
+        elif pid == 2:
+            return "상(상)"
+        elif pid == 3:
+            return "자(상)"
+        elif pid == 4:
+            return "후(상)"
+        elif pid == 5:
+            return "자(하)"
+        elif pid == 6:
+            return "상(하)"
+        elif pid == 7:
+            return "왕(하)"
+        elif pid == 8:
+            return "장(하)"
+        elif pid == 9:
+            return "후(하)"
+        else:
+            return None

@@ -22,9 +22,10 @@ class PolicyWrapper(torch.nn.Module):
         # self.policy.forward(obs) 가 반환하는 값은 여러 개의 요소를 가진 튜플일 수 있습니다.
         # 여기서는 첫 번째 요소(예: 행동)를 사용한다고 가정합니다.
         outputs = self.policy.forward(obs)
-        action = outputs[0]
-        logits = outputs[1]
-        return action, logits
+        print(outputs)
+        action = outputs[0]  # 첫번째 값이 행동(action)라고 가정
+        return action
+
 # Wrapper 생성
 wrapper = PolicyWrapper(model.policy)
 
@@ -34,7 +35,7 @@ torch.onnx.export(
     (dummy_board, dummy_turn),
     "new2_1.onnx",
     input_names=["board", "turn"],
-    output_names=["action", "logits"],
+    output_names=["action"],
     opset_version=11
 )
 
