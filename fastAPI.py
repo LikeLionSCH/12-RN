@@ -56,6 +56,7 @@ def predict_next_move(data: InputObservation):
     # API에서 받은 데이터를 환경에 적용
     env.unwrapped.board = np.array(data.board, dtype=np.uint8)
     env.unwrapped.turn = data.turn
+    env.unwrapped.set_test_mode(True)
     
     # 유효한 행동 마스크 얻기
     action_mask = env.unwrapped.get_valid_actions()
@@ -65,13 +66,13 @@ def predict_next_move(data: InputObservation):
         action, _states = model_up.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
-            deterministic=True
+            deterministic=False
         )
     else:
         action, _states = model_down.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
-            deterministic=True
+            deterministic=False
         )
     
     # 예측한 행동을 환경에 적용

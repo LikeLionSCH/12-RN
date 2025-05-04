@@ -31,12 +31,13 @@ for ep in range(num_episodes):
         
         # 모델 실행 시 마스킹 적용 (유효한 행동만 선택)
         if obs["turn"] == 0:
-            action, _states = model_1.predict(obs, action_masks=action_mask, deterministic=True)
+            action, _states = model_1.predict(obs, action_masks=action_mask, deterministic=False)
         else :
-            action, _states = model_2.predict(obs, action_masks=action_mask, deterministic=True)
+            action, _states = model_2.predict(obs, action_masks=action_mask, deterministic=False)
         obs, reward, terminated, truncated, info = env.step(action)
         laObs = obs
         done = terminated or truncated
+        print(reward)
         episode_reward += reward
 
     print(f"Episode {ep+1}: Total Reward = {episode_reward}")

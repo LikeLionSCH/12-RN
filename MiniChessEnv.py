@@ -29,10 +29,13 @@ class MiniChessEnv(gym.Env):
         self.time = 0
         self.is_test_mode = False
 
+        self.is_up_player_arrived = False
+        self.is_down_player_arrived = False
+
         # 학습시 상대 모델 적용
         self.embedded_env = None
         self.embedded_model = None
-        self.user = None
+        self.enemy = None
 
         self.reset()
         
@@ -40,11 +43,11 @@ class MiniChessEnv(gym.Env):
         """테스트 모드 설정"""
         self.is_test_mode = is_test_mode
 
-    def set_embedded_env(self, env, model, user):
+    def set_embedded_env(self, env, model, enemy):
         """상대 모델 설정"""
         self.embedded_env = env
         self.embedded_model = model
-        self.user = user
+        self.enemy = enemy
     
     
     def reset(self, seed=None, options=None):
@@ -77,58 +80,82 @@ class MiniChessEnv(gym.Env):
         행동(action)은 0부터 8*3*8*3-1 까지의 정수라고 가정합니다.
         여기에서는 간단히 출발 위치와 도착 위치로 해석합니다.
         """
+        done = False
         start_index = action // (8 * 3)
         target_index = action % (8 * 3)
         start_row, start_col = divmod(start_index, 3)
         target_row, target_col = divmod(target_index, 3)
         
-        piece_found = False
         piece_id = None
         
         foundPid = self.get_piece_id(start_row, start_col)
         if foundPid > -1:
             piece_id = foundPid
-            piece_found = True
-        
-        valid_move = False
-        if piece_found:
-            valid_move = self.validate_move(piece_id, (start_row, start_col), (target_row, target_col))
         
         if self.is_test_mode:
             print("action:", action)
             print(start_row, start_col, "에서", target_row, target_col, "로 이동")
             print("기물:", self.get_kr_from_pid(piece_id))
 
-        reward = self.time * -1
+        reward = -1
         
         targetPid = self.get_piece_id(target_row, target_col)
-        if valid_move and targetPid == 1:
-            reward += 500 if self.user == 1 else -500
-        elif valid_move and targetPid == 7:
-            reward += -500 if self.user == 1 else 500
+        if targetPid == 1:
+            reward = 500 if self.enemy == 0 else -500
+            done = True
+        elif targetPid == 7:
+            reward = -500 if self.enemy == 0 else 500
+            done = True
+
+        # 왕이 도착했는지 확인
+        row_2_has_king = False
+        row_2_has_king |= self.get_piece_id(2, 0) == 7
+        row_2_has_king |= self.get_piece_id(2, 1) == 7
+        row_2_has_king |= self.get_piece_id(2, 2) == 7
+
+        row_5_has_king = False
+        row_5_has_king |= self.get_piece_id(5, 0) == 1
+        row_5_has_king |= self.get_piece_id(5, 1) == 1
+        row_5_has_king |= self.get_piece_id(5, 2) == 1
+        if self.is_up_player_arrived and row_5_has_king:
+            reward = 500 if self.enemy == 1 else -500
+            done = True
+        elif self.is_down_player_arrived and row_2_has_king:
+            reward = -500 if self.enemy == 1 else 500
+            done = True
+        
+        self.is_up_player_arrived = row_5_has_king
+        self.is_down_player_arrived = row_2_has_king
         
         # 잡은 기물이 있음
         if targetPid != -1:
             self.catch_piece(targetPid)
 
-
-        # 이동 적용
+        # 이동 적용    
         self.board[piece_id, start_row, start_col] = 0
-        self.board[piece_id, target_row, target_col] = 1
+        if piece_id == 3 and target_row == 5:
+            # 자가 5행에 도착하면 후로 변경
+            self.board[4, target_row, target_col] = 1
+        elif piece_id == 5 and target_row == 2:
+            # 자가 2행에 도착하면 후로 변경
+            self.board[9, target_row, target_col] = 1
+        else:
+            self.board[piece_id, target_row, target_col] = 1
         self.turn = 1 - self.turn
 
         obs = {"board": self.board, "turn": self.turn}
 
         # 상대 기물 이동
-        if not self.is_test_mode and self.turn == self.user :
+        if not self.is_test_mode and self.turn == self.enemy and not done :
             action_mask = self.embedded_env.unwrapped.get_valid_actions()
             action, _states = self.embedded_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
-            obs, reward, terminated, truncated, info = self.embedded_env.step(action)
-            self.turn = 1 - self.turn
+            obs, _, terminated, truncated, info = self.step(action)
         self.time += 1
-
-        done = self.is_over()  # 종료조건
         
+        if self.time > 500:
+            reward = -100
+            done = True
+
         return obs, reward, done, False, {}
     
     def get_piece_id(self, row, col):
@@ -253,16 +280,6 @@ class MiniChessEnv(gym.Env):
             return (row_diff == 1 and col_diff == 0) or (col_diff == 1 and row_diff == 0) or (row_diff == 1 and col_diff == 1 and target_pos[0] < start_pos[0])
         return False
     
-    def is_over(self):
-        if self.time > 500:
-            return True
-        king_white_id = 1  # 백 왕 ID (예제)
-        king_black_id = 7  # 흑 왕 ID (예제)
-    
-        white_king_exists = (self.board[king_white_id] == 1).any()
-        black_king_exists = (self.board[king_black_id] == 1).any()
-    
-        return not (white_king_exists and black_king_exists) 
         
     def get_valid_actions(self):
         """현재 보드 상태 기준으로 가능한 모든 행동에 대해 유효성 마스크를 반환합니다."""
