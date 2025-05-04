@@ -33,9 +33,8 @@ class MiniChessEnv(gym.Env):
         self.is_down_player_arrived = False
 
         # 학습시 상대 모델 적용
-        self.embedded_env = None
-        self.embedded_model = None
-        self.enemy = None
+        self.enemy_model = None
+        self.enemy = 1
 
         self.reset()
         
@@ -43,10 +42,9 @@ class MiniChessEnv(gym.Env):
         """테스트 모드 설정"""
         self.is_test_mode = is_test_mode
 
-    def set_embedded_env(self, env, model, enemy):
+    def set_enemy_env(self, model, enemy):
         """상대 모델 설정"""
-        self.embedded_env = env
-        self.embedded_model = model
+        self.enemy_model = model
         self.enemy = enemy
     
     
@@ -73,6 +71,14 @@ class MiniChessEnv(gym.Env):
         self.turn = 0
         self.time = 0
         
+        # 상대가 먼저라면 한턴 시작시키기
+        if self.enemy == 0:
+            action_mask = self.get_valid_actions()
+            action, _states = self.enemy_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
+            obs = self.step(action)
+            self.time += 1
+            return obs[0],{}
+        
         return {"board": self.board, "turn": self.turn}, {}
     
     def step(self, action):
@@ -92,11 +98,6 @@ class MiniChessEnv(gym.Env):
         if foundPid > -1:
             piece_id = foundPid
         
-        if self.is_test_mode:
-            print("action:", action)
-            print(start_row, start_col, "에서", target_row, target_col, "로 이동")
-            print("기물:", self.get_kr_from_pid(piece_id))
-
         reward = -1
         
         targetPid = self.get_piece_id(target_row, target_col)
@@ -141,20 +142,23 @@ class MiniChessEnv(gym.Env):
             self.board[9, target_row, target_col] = 1
         else:
             self.board[piece_id, target_row, target_col] = 1
+
         self.turn = 1 - self.turn
 
         obs = {"board": self.board, "turn": self.turn}
-
-        # 상대 기물 이동
-        if not self.is_test_mode and self.turn == self.enemy and not done :
-            action_mask = self.embedded_env.unwrapped.get_valid_actions()
-            action, _states = self.embedded_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
-            obs, _, terminated, truncated, info = self.step(action)
-        self.time += 1
         
+        self.time += 1
+
         if self.time > 500:
             reward = -100
             done = True
+
+        # 상대 기물 이동
+        if not self.is_test_mode and self.turn == self.enemy and not done :
+            action_mask = self.get_valid_actions()
+            action, _states = self.enemy_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
+            obs, _, terminated, truncated, info = self.step(action)
+            done |= terminated or truncated
 
         return obs, reward, done, False, {}
     
@@ -217,10 +221,7 @@ class MiniChessEnv(gym.Env):
 
     def validate_move(self, piece_id, start_pos, target_pos):
         """기물별 이동 규칙 검증 """
-        row_diff = abs(target_pos[0] - start_pos[0])
-        col_diff = abs(target_pos[1] - start_pos[1])
-        
-        #게임 안에 있는 기물은 게임 안에서민 이동해야 함
+        #게임 안에 있는 기물은 게임 안에서만 이동해야 함
         if start_pos[0] >= 2 and start_pos[0] <= 5:
             if target_pos[0] < 2 or target_pos[0] > 5:
                 return False
@@ -245,6 +246,14 @@ class MiniChessEnv(gym.Env):
                 return False
             return self.get_piece_id(target_pos[0], target_pos[1]) == -1
         
+        row_diff = abs(target_pos[0] - start_pos[0])
+        col_diff = abs(target_pos[1] - start_pos[1])
+
+        # 기물 ID 확인 (비어 있으면 이동 불가)
+        if piece_id == -1:
+            return False
+
+        # 상대방의 기물은 이동 불가
         if piece_id <= 4 and self.turn == 1:
             return False
         
