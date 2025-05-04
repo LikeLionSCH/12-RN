@@ -42,14 +42,16 @@ class InputObservation(BaseModel):
 def read_root():
     return {"message": "MiniChess 예측 API 입니다."}
 
+
+# 먼저 reset을 호출하여 환경을 초기화함
+obs, info = env.reset()
+
 @app.post("/predict/")
 def predict_next_move(data: InputObservation):
     """
     전달받은 보드 상태와 차례를 환경에 반영한 후,
     해당 차례에 맞는 모델로 예측하고 한 스텝 진행 후 결과를 반환합니다.
     """
-    # 먼저 reset을 호출하여 환경을 초기화함
-    obs, info = env.reset()
     
     # API에서 받은 데이터를 환경에 적용
     env.unwrapped.board = np.array(data.board, dtype=np.uint8)
