@@ -29,8 +29,8 @@ env.unwrapped.set_test_mode(True)  # 테스트 모드 활성화
 env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 
 # MaskablePPO 모델 로드 (각 모델이 플레이어 차례에 따라 사용됨)
-model_1 = MaskablePPO.load("./new2_0")  # 예: 플레이어 0
-model_2 = MaskablePPO.load("./new2_1")  # 예: 플레이어 1
+model_up = MaskablePPO.load("./model_up.zip")  # 예: 플레이어 0
+model_down = MaskablePPO.load("./model_down.zip")  # 예: 플레이어 1
 
 # 요청 바디 데이터 모델 정의
 class InputObservation(BaseModel):
@@ -60,13 +60,13 @@ def predict_next_move(data: InputObservation):
     
     # 현재 차례에 따라 모델 선택 및 예측
     if data.turn == 0:
-        action, _states = model_1.predict(
+        action, _states = model_up.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
             deterministic=True
         )
     else:
-        action, _states = model_2.predict(
+        action, _states = model_down.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
             deterministic=True

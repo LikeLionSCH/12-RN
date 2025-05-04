@@ -103,12 +103,14 @@ class MiniChessEnv(gym.Env):
         
         targetPid = self.get_piece_id(target_row, target_col)
         if valid_move and targetPid == 1:
-            reward += 500 if self.user == 0 else -500
+            reward += 500 if self.user == "down" else -500
         elif valid_move and targetPid == 7:
-            reward += -500 if self.user == 0 else 500
+            reward += -500 if self.user == 'down' else 500
         
+        # 잡은 기물이 있음
         if targetPid != -1:
-            self.board[targetPid, target_row, target_col] = 0
+            self.catch_piece(targetPid)
+
 
         # 이동 적용
         self.board[piece_id, start_row, start_col] = 0
@@ -118,10 +120,10 @@ class MiniChessEnv(gym.Env):
         obs = {"board": self.board, "turn": self.turn}
 
         # 상대 기물 이동
-        if self.is_test_mode and self.turn == self.user :
+        if not self.is_test_mode and self.turn == self.user :
             action_mask = self.embedded_env.unwrapped.get_valid_actions()
             action, _states = self.embedded_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
-            obs, reward, terminated, truncated, info = env.step(action)
+            obs, reward, terminated, truncated, info = self.embedded_env.step(action)
             self.turn = 1 - self.turn
         self.time += 1
 
@@ -135,18 +137,83 @@ class MiniChessEnv(gym.Env):
                 return pid
         return -1
     
+    def catch_piece(self, targetPid):
+        #윗 장을 잡음
+        if targetPid == 0:
+            if self.board[8, 6, 1] == 1:
+                self.board[8, 7, 1] = 1
+            else:
+                self.board[8, 6, 1] = 1
+        #윗 상을 잡음
+        elif targetPid == 2:
+            if self.board[6, 6, 2] == 1:
+                self.board[6, 7, 2] = 1
+            else:
+                self.board[6, 6, 2] = 1
+        #윗 자를 잡음
+        elif targetPid == 3:
+            if self.board[5, 6, 0] == 1:
+                self.board[5, 7, 0] = 1
+            else:
+                self.board[5, 6, 0] = 1
+        #윗 후를 잡음
+        elif targetPid == 4:
+            if self.board[5, 6, 0] == 1:
+                self.board[5, 7, 0] = 1
+            else:
+                self.board[5, 6, 0] = 1
+
+        #아랫 장을 잡음
+        elif targetPid == 8:
+            if self.board[0, 1, 1] == 1:
+                self.board[0, 0, 1] = 1
+            else:
+                self.board[0, 1, 1] = 1
+        #아랫 상을 잡음
+        elif targetPid == 6:
+            if self.board[2, 1, 2] == 1:
+                self.board[2, 0, 2] = 1
+            else:
+                self.board[2, 1, 2] = 1
+        #아랫 자를 잡음
+        elif targetPid == 5:
+            if self.board[3, 1, 0] == 1:
+                self.board[3, 0, 0] = 1
+            else:
+                self.board[3, 1, 0] = 1
+        #아랫 후를 잡음
+        elif targetPid == 9:
+            if self.board[3, 1, 0] == 1:
+                self.board[3, 0, 0] = 1
+            else:
+                self.board[3, 1, 0] = 1
+
     def validate_move(self, piece_id, start_pos, target_pos):
         """기물별 이동 규칙 검증 """
         row_diff = abs(target_pos[0] - start_pos[0])
         col_diff = abs(target_pos[1] - start_pos[1])
         
-        if target_pos[0] < 2 or target_pos[0] > 5:
+        #게임 안에 있는 기물은 게임 안에서민 이동해야 함
+        if start_pos[0] >= 2 and start_pos[0] <= 5:
+            if target_pos[0] < 2 or target_pos[0] > 5:
+                return False
+            
+        #윗사람이 잡은 기물 놓기
+        if start_pos[0] < 2:
+            if target_pos[0] >= 5:
+                return False
+            return self.get_piece_id(target_pos[0], target_pos[1]) == -1
+        
+        #아랫사람이 잡은 기물 놓기
+        elif start_pos[0] > 5:
+            if target_pos[0] <= 2:
+                return False
+            return self.get_piece_id(target_pos[0], target_pos[1]) == -1
+        
+        if piece_id <= 4 and self.turn == 1:
             return False
         
-        if piece_id <= 4 and self.turn == 0:
-            return False
-        
-        if piece_id >= 5 and self.turn == 1:
+        if piece_id >= 5 and self.turn == 0:
             return False
         
         targetPid = self.get_piece_id(target_pos[0], target_pos[1])
