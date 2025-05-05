@@ -43,8 +43,8 @@ for i in range(1, 100000):
     # 추가 학습
     if user == 'up':
         model.learn(total_timesteps=200_000)
-    else : #다운이 성능이 더 안좋아서 더 많은 학습
-        model.learn(total_timesteps=300_000)
+    else :
+        model.learn(total_timesteps=200_000)
     # 학습된 모델 저장
     model.save(model_path)
     
