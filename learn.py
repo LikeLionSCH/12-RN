@@ -26,13 +26,15 @@ for i in range(1, 100000):
     model_path = "./model_" + str(user)
     try:
         model = MaskablePPO.load(model_path, env=env)
+        model.verbose = 0
+        model.ent_coef = 0.4
         print(f"Loaded existing model: {model_path} (Continuing training)")
     except FileNotFoundError:
         print(f"No previous model found at {model_path}, training from scratch")
         model = MaskablePPO(
             "MultiInputPolicy", 
             env,
-            verbose=1,
+            verbose=0,
             batch_size=1024,  # 기존 유지
             learning_rate=0.01,  # 기존 0.03 → 0.01 (더 안정적인 학습)
             ent_coef=0.5,  # 기존 0.2 → 0.5 (탐색 강화)
