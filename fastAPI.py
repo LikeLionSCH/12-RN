@@ -66,13 +66,13 @@ def predict_next_move(data: InputObservation):
         action, _states = model_up.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
-            deterministic=False
+            deterministic=True
         )
     else:
         action, _states = model_down.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
-            deterministic=False
+            deterministic=True
         )
     
     # 예측한 행동을 환경에 적용
