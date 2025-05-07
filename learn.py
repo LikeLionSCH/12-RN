@@ -26,17 +26,18 @@ for i in range(1, 100000):
     model_path = "./model_" + str(user)
     try:
         model = MaskablePPO.load(model_path, env=env)
-        model.verbose = 0
+        model.verbose = 1
         model.ent_coef = 0.4
+        model.learning_rate = 0.03 # 조금 더 적극적인 학습 하도록
         print(f"Loaded existing model: {model_path} (Continuing training)")
     except FileNotFoundError:
         print(f"No previous model found at {model_path}, training from scratch")
         model = MaskablePPO(
             "MultiInputPolicy", 
             env,
-            verbose=0,
+            verbose=1,
             batch_size=1024,  # 기존 유지
-            learning_rate=0.01,  # 기존 0.03 → 0.01 (더 안정적인 학습)
+            learning_rate=0.03,
             ent_coef=0.5,  # 기존 0.2 → 0.5 (탐색 강화)
             n_steps=2048,  # 더 긴 학습 루프
             clip_range=0.2  # 기존 유지
@@ -44,9 +45,9 @@ for i in range(1, 100000):
 
     # 추가 학습
     if user == 'up':
-        model.learn(total_timesteps=200_000)
+        model.learn(total_timesteps=80_000)
     else :
-        model.learn(total_timesteps=200_000)
+        model.learn(total_timesteps=80_000)
     # 학습된 모델 저장
     model.save(model_path)
     

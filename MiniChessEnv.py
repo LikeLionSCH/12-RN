@@ -102,10 +102,10 @@ class MiniChessEnv(gym.Env):
         
         targetPid = self.get_piece_id(target_row, target_col)
         if targetPid == 1:
-            reward = 100 if self.enemy == 0 else -500
+            reward = 500 if self.enemy == 0 else -1000
             done = True
         elif targetPid == 7:
-            reward = -500 if self.enemy == 0 else 100
+            reward = -1000 if self.enemy == 0 else 500
             done = True
 
         # 왕이 도착했는지 확인
@@ -119,10 +119,10 @@ class MiniChessEnv(gym.Env):
         row_5_has_king |= self.get_piece_id(5, 1) == 1
         row_5_has_king |= self.get_piece_id(5, 2) == 1
         if self.is_up_player_arrived and row_5_has_king:
-            reward = 100 if self.enemy == 1 else -500
+            reward = 500 if self.enemy == 1 else -1000
             done = True
         elif self.is_down_player_arrived and row_2_has_king:
-            reward = -500 if self.enemy == 1 else 100
+            reward = -1000 if self.enemy == 1 else 500
             done = True
         
         self.is_up_player_arrived = row_5_has_king
