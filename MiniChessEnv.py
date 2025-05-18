@@ -8,6 +8,9 @@ gym.register(
     entry_point="MiniChessEnv:MiniChessEnv"
 )
 
+win_point = 500
+loss_point = -500
+
 class MiniChessEnv(gym.Env):
     """8×3 크기의 체스 유사 게임 환경 (차례 정보 포함)"""
     
@@ -51,6 +54,7 @@ class MiniChessEnv(gym.Env):
     def reset(self, seed=None, options=None):
         """게임 초기화 및 초기 관측 반환"""
         super().reset(seed=seed)
+        #print("리셋")
         
         # 보드 초기화: 8×3×4 텐서 (각 기물별 채널)
         self.board = np.zeros((self.num_pieces, 8, 3), dtype=np.uint8)
@@ -76,7 +80,6 @@ class MiniChessEnv(gym.Env):
             action_mask = self.get_valid_actions()
             action, _states = self.enemy_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
             obs = self.step(action)
-            self.time += 1
             return obs[0],{}
         
         return {"board": self.board, "turn": self.turn}, {}
@@ -86,6 +89,7 @@ class MiniChessEnv(gym.Env):
         행동(action)은 0부터 8*3*8*3-1 까지의 정수라고 가정합니다.
         여기에서는 간단히 출발 위치와 도착 위치로 해석합니다.
         """
+        
         done = False
         start_index = action // (8 * 3)
         target_index = action % (8 * 3)
@@ -97,15 +101,15 @@ class MiniChessEnv(gym.Env):
         foundPid = self.get_piece_id(start_row, start_col)
         if foundPid > -1:
             piece_id = foundPid
-        
+            
         reward = -1
-        
+         
         targetPid = self.get_piece_id(target_row, target_col)
         if targetPid == 1:
-            reward = 500 if self.enemy == 0 else -1000
+            reward = win_point if self.enemy == 0 else loss_point
             done = True
         elif targetPid == 7:
-            reward = -1000 if self.enemy == 0 else 500
+            reward = loss_point if self.enemy == 0 else win_point
             done = True
 
         # 왕이 도착했는지 확인
@@ -119,10 +123,10 @@ class MiniChessEnv(gym.Env):
         row_5_has_king |= self.get_piece_id(5, 1) == 1
         row_5_has_king |= self.get_piece_id(5, 2) == 1
         if self.is_up_player_arrived and row_5_has_king:
-            reward = 500 if self.enemy == 1 else -1000
+            reward = win_point if self.enemy == 1 else loss_point
             done = True
         elif self.is_down_player_arrived and row_2_has_king:
-            reward = -1000 if self.enemy == 1 else 500
+            reward = loss_point if self.enemy == 1 else win_point
             done = True
         
         self.is_up_player_arrived = row_5_has_king
@@ -131,6 +135,7 @@ class MiniChessEnv(gym.Env):
         # 잡은 기물이 있음
         if targetPid != -1:
             self.catch_piece(targetPid)
+            self.board[targetPid, target_row, target_col] = 0
 
         # 이동 적용    
         self.board[piece_id, start_row, start_col] = 0
@@ -141,6 +146,8 @@ class MiniChessEnv(gym.Env):
             # 자가 2행에 도착하면 후로 변경
             self.board[9, target_row, target_col] = 1
         else:
+            #kr = self.get_kr_from_pid(piece_id)
+            #print(f"{kr}가 {start_row} {start_col}에서 {target_row} {target_col}로 이동")
             self.board[piece_id, target_row, target_col] = 1
 
         self.turn = 1 - self.turn
@@ -150,16 +157,16 @@ class MiniChessEnv(gym.Env):
         self.time += 1
 
         if self.time > 500:
-            reward = -300
+            reward = -600
             done = True
 
         # 상대 기물 이동
         if not self.is_test_mode and self.turn == self.enemy and not done :
+            #print("상대턴")
             action_mask = self.get_valid_actions()
             action, _states = self.enemy_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
-            obs, _, terminated, truncated, info = self.step(action)
+            obs, reward, terminated, truncated, info = self.step(action)
             done |= terminated or truncated
-
         return obs, reward, done, False, {}
     
     def get_piece_id(self, row, col):
