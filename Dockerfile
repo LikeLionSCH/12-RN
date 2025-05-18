@@ -11,7 +11,6 @@ COPY . /app
 RUN pip install gymnasium
 RUN pip install sb3_contrib
 RUN pip install FastAPI
-RUN pip install uvicorn
 
 # 컨테이너 실행 시 기본적으로 실행할 명령 설정
 #CMD ["python", "learn.py"]  # 메인 파일을 실행하도록 설정

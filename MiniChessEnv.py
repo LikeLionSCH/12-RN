@@ -54,7 +54,7 @@ class MiniChessEnv(gym.Env):
     def reset(self, seed=None, options=None):
         """게임 초기화 및 초기 관측 반환"""
         super().reset(seed=seed)
-        #print("리셋")
+        #print("-----------리셋-----------")
         
         # 보드 초기화: 8×3×4 텐서 (각 기물별 채널)
         self.board = np.zeros((self.num_pieces, 8, 3), dtype=np.uint8)
@@ -89,6 +89,8 @@ class MiniChessEnv(gym.Env):
         행동(action)은 0부터 8*3*8*3-1 까지의 정수라고 가정합니다.
         여기에서는 간단히 출발 위치와 도착 위치로 해석합니다.
         """
+        #if self.enemy != self.turn:
+            #print("나의 턴")
         
         done = False
         start_index = action // (8 * 3)
@@ -114,18 +116,18 @@ class MiniChessEnv(gym.Env):
 
         # 왕이 도착했는지 확인
         row_2_has_king = False
-        row_2_has_king |= self.get_piece_id(2, 0) == 7
-        row_2_has_king |= self.get_piece_id(2, 1) == 7
-        row_2_has_king |= self.get_piece_id(2, 2) == 7
+        row_2_has_king |= self.board[7,2,0] == 1
+        row_2_has_king |= self.board[7,2,1] == 1
+        row_2_has_king |= self.board[7,2,2] == 1
 
         row_5_has_king = False
-        row_5_has_king |= self.get_piece_id(5, 0) == 1
-        row_5_has_king |= self.get_piece_id(5, 1) == 1
-        row_5_has_king |= self.get_piece_id(5, 2) == 1
-        if self.is_up_player_arrived and row_5_has_king:
+        row_5_has_king |= self.board[1, 5, 0] == 1
+        row_5_has_king |= self.board[1, 5, 1] == 1
+        row_5_has_king |= self.board[1, 5, 2] == 1
+        if self.is_up_player_arrived and row_5_has_king and not done:
             reward = win_point if self.enemy == 1 else loss_point
             done = True
-        elif self.is_down_player_arrived and row_2_has_king:
+        elif self.is_down_player_arrived and row_2_has_king and not done:
             reward = loss_point if self.enemy == 1 else win_point
             done = True
         
@@ -157,7 +159,7 @@ class MiniChessEnv(gym.Env):
         self.time += 1
 
         if self.time > 500:
-            reward = -600
+            reward = -300
             done = True
 
         # 상대 기물 이동
@@ -228,6 +230,18 @@ class MiniChessEnv(gym.Env):
 
     def validate_move(self, piece_id, start_pos, target_pos):
         """기물별 이동 규칙 검증 """
+        # 기물 ID 확인 (비어 있으면 이동 불가)
+        if piece_id == -1:
+            return False
+        
+        # 상대방의 기물은 이동 불가
+        if piece_id <= 4 and self.turn == 1:
+            return False
+        
+        if piece_id >= 5 and self.turn == 0:
+            return False
+        
+        
         #게임 안에 있는 기물은 게임 안에서만 이동해야 함
         if start_pos[0] >= 2 and start_pos[0] <= 5:
             if target_pos[0] < 2 or target_pos[0] > 5:
@@ -256,17 +270,6 @@ class MiniChessEnv(gym.Env):
         row_diff = abs(target_pos[0] - start_pos[0])
         col_diff = abs(target_pos[1] - start_pos[1])
 
-        # 기물 ID 확인 (비어 있으면 이동 불가)
-        if piece_id == -1:
-            return False
-
-        # 상대방의 기물은 이동 불가
-        if piece_id <= 4 and self.turn == 1:
-            return False
-        
-        if piece_id >= 5 and self.turn == 0:
-            return False
-        
         targetPid = self.get_piece_id(target_pos[0], target_pos[1])
         if targetPid > -1:
             if targetPid <= 4 and piece_id <= 4:

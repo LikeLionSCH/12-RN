@@ -4,12 +4,11 @@ from sb3_contrib.common.wrappers import ActionMasker
 
 from MiniChessEnv import MiniChessEnv
 
-
 # 학습할 모델의 턴
 user = 'up'  # up or down
 
 
-for i in range(0, 100000):
+for i in range(1, 100000):
     print("Training model_" + str(i))
     user = 'up' if i % 2 == 0 else 'down'
 
@@ -21,16 +20,16 @@ for i in range(0, 100000):
     env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 
     # 상대 모델 로드
-    enemy_model = MaskablePPO.load("./model_" + str(enemy), env=env)
+    enemy_model = MaskablePPO.load("./model_" + str(enemy), env=env, device="cpu")
     env.unwrapped.set_enemy_env(enemy_model, enemy=0 if enemy == 'up' else 1)
 
     # 이전 모델을 로드하여 추가 학습 진행
-    model_path = "./new_model_" + str(user)
+    model_path = "./model_" + str(user)
 
     try:
-        model = MaskablePPO.load(model_path, env=env)
+        model = MaskablePPO.load(model_path, env=env,  device="cpu")
         model.verbose = 1
-        model.ent_coef = 0.3
+        model.ent_coef = 0.5
         model.gamma = 0.99  # 미래 보상 반영 증가
         model.learning_rate = 0.001 # 조금 더 적극적인 학습 하도록
         print(f"Loaded existing model: {model_path} (Continuing training)")
@@ -47,8 +46,8 @@ for i in range(0, 100000):
             clip_range=0.2, # 기존 유지
             policy_kwargs={
                "net_arch": {
-                   "pi": [128, 128],  # actor network 2개 층, 각 층에 128개 뉴런
-                   "vf": [128, 128]   # critic network 2개 층, 각 층에 128개 뉴런
+                   "pi": [256, 256, 256, 256],  # actor network
+                   "vf": [256, 256, 256, 256]   # critic network
                }
            }
         )
