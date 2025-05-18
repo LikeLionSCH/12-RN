@@ -10,6 +10,7 @@ gym.register(
 
 win_point = 500
 loss_point = -500
+board_size = 8 * 3
 
 class MiniChessEnv(gym.Env):
     """8×3 크기의 체스 유사 게임 환경 (차례 정보 포함)"""
@@ -28,7 +29,7 @@ class MiniChessEnv(gym.Env):
         })
         
         # 행동 공간: 가능한 모든 출발지-도착지 (총 8*3*8*3 개)
-        self.action_space = spaces.Discrete(8 * 3 * 8 * 3)
+        self.action_space = spaces.Discrete(board_size * board_size)
         self.time = 0
         self.is_test_mode = False
 
@@ -38,6 +39,9 @@ class MiniChessEnv(gym.Env):
         # 학습시 상대 모델 적용
         self.enemy_model = None
         self.enemy = 1
+        
+        self.two_d_board = np.full((8, 3), -1, dtype=np.int8)
+        self.two_d_board_num = -1
 
         self.reset()
         
@@ -93,8 +97,8 @@ class MiniChessEnv(gym.Env):
             #print("나의 턴")
         
         done = False
-        start_index = action // (8 * 3)
-        target_index = action % (8 * 3)
+        start_index = action // (board_size)
+        target_index = action % (board_size)
         start_row, start_col = divmod(start_index, 3)
         target_row, target_col = divmod(target_index, 3)
         
@@ -149,7 +153,7 @@ class MiniChessEnv(gym.Env):
             self.board[9, target_row, target_col] = 1
         else:
             #kr = self.get_kr_from_pid(piece_id)
-            #print(f"{kr}가 {start_row} {start_col}에서 {target_row} {target_col}로 이동")
+            #print(f"{kr}가 ({start_row} {start_col}) 에서 ({target_row} {target_col}) 로 이동")
             self.board[piece_id, target_row, target_col] = 1
 
         self.turn = 1 - self.turn
@@ -172,11 +176,18 @@ class MiniChessEnv(gym.Env):
         return obs, reward, done, False, {}
     
     def get_piece_id(self, row, col):
-        for pid in range(self.num_pieces):
-            if self.board[pid, row, col] == 1:
-                return pid
-        return -1
-    
+        if self.time == self.two_d_board_num:
+            return self.two_d_board[row, col]
+        self.two_d_board_num = self.time
+        self.two_d_board = np.full((8, 3), -1, dtype=np.int8)
+        for rowIndex in range(8):
+            for colIndex in range(3):
+                for pid in range(self.num_pieces):
+                    if self.board[pid, rowIndex, colIndex] == 1:
+                        self.two_d_board[rowIndex, colIndex] = pid
+                        break
+        return self.two_d_board[row, col]
+
     def catch_piece(self, targetPid):
         #윗 장을 잡음
         if targetPid == 0:
@@ -246,6 +257,8 @@ class MiniChessEnv(gym.Env):
         if start_pos[0] >= 2 and start_pos[0] <= 5:
             if target_pos[0] < 2 or target_pos[0] > 5:
                 return False
+
+        targetPid = self.get_piece_id(target_pos[0], target_pos[1])
             
         #윗사람이 잡은 기물 놓기
         if start_pos[0] < 2:
@@ -255,7 +268,7 @@ class MiniChessEnv(gym.Env):
                 return False
             if self.turn == 1:
                 return False
-            return self.get_piece_id(target_pos[0], target_pos[1]) == -1
+            return targetPid == -1
         
         #아랫사람이 잡은 기물 놓기
         elif start_pos[0] > 5:
@@ -265,12 +278,11 @@ class MiniChessEnv(gym.Env):
                 return False
             if self.turn == 0:
                 return False
-            return self.get_piece_id(target_pos[0], target_pos[1]) == -1
+            return targetPid == -1
         
         row_diff = abs(target_pos[0] - start_pos[0])
         col_diff = abs(target_pos[1] - start_pos[1])
 
-        targetPid = self.get_piece_id(target_pos[0], target_pos[1])
         if targetPid > -1:
             if targetPid <= 4 and piece_id <= 4:
                 return False
@@ -298,26 +310,23 @@ class MiniChessEnv(gym.Env):
         elif piece_id == 9:  # 후: 위로 대각 빼고 한 칸 이동
             return (row_diff == 1 and col_diff == 0) or (col_diff == 1 and row_diff == 0) or (row_diff == 1 and col_diff == 1 and target_pos[0] < start_pos[0])
         return False
-    
+
+     
         
     def get_valid_actions(self):
         """현재 보드 상태 기준으로 가능한 모든 행동에 대해 유효성 마스크를 반환합니다."""
         valid_mask = np.zeros(self.action_space.n, dtype=bool)
-        for action in range(self.action_space.n):
-            start_index = action // (8 * 3)
-            target_index = action % (8 * 3)
+        for start_index in range(board_size):
             start_row, start_col = divmod(start_index, 3)
-            target_row, target_col = divmod(target_index, 3)
-            
-            piece_found = False
-            piece_id = None
-            for pid in range(self.num_pieces):
-                if self.board[pid, start_row, start_col] == 1:
-                    piece_found = True
-                    piece_id = pid
-                    break
-            if piece_found and self.validate_move(piece_id, (start_row, start_col), (target_row, target_col)):
-                valid_mask[action] = True
+            piece_id = self.get_piece_id(start_row, start_col)
+            if piece_id == -1:
+                continue
+
+            for target_index in range(board_size):
+                target_row, target_col = divmod(target_index, 3)
+                if self.validate_move(piece_id, (start_row, start_col), (target_row, target_col)):
+                    action = start_index * (board_size) + target_index
+                    valid_mask[action] = True
         return valid_mask
 
     def get_kr_from_pid(self, pid):
