@@ -44,32 +44,31 @@ def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: 
     for _ in range(n_episodes):
         env = gym.make("MiniChess-v0")
         env = ActionMasker(env, lambda e: e.unwrapped.get_valid_actions())
+        env.unwrapped.set_test_mode(True)
         obs, info = env.reset()
         done = False
         truncated = False
 
         while not (done or truncated):
-            current_player = env.unwrapped.current_player
+            current_player = env.unwrapped.turn
             model = up_model if current_player == 0 else down_model
 
             action_masks = env.unwrapped.get_valid_actions()
             action, _ = model.predict(obs, action_masks=action_masks, deterministic=False)
             obs, reward, done, truncated, info = env.step(action)
 
-        # Check who won based on final reward
-        if done:
-            if reward > 0:  # Current player at end won
-                if env.unwrapped.current_player == 0:
-                    up_wins += 1
-                else:
-                    down_wins += 1
-            elif reward < 0:  # Current player at end lost
-                if env.unwrapped.current_player == 0:
-                    down_wins += 1
-                else:
-                    up_wins += 1
-            else:
-                draws += 1
+        # Determine winner based on board state
+        up_king_alive = bool((env.unwrapped.board[1] == 1).any())
+        down_king_alive = bool((env.unwrapped.board[7] == 1).any())
+        up_king_at_row5 = bool((env.unwrapped.board[1, 5, :] == 1).any())
+        down_king_at_row2 = bool((env.unwrapped.board[7, 2, :] == 1).any())
+
+        # UP wins if: DOWN king died OR UP king reached row 5
+        # DOWN wins if: UP king died OR DOWN king reached row 2
+        if not down_king_alive or up_king_at_row5:
+            up_wins += 1
+        elif not up_king_alive or down_king_at_row2:
+            down_wins += 1
         else:
             draws += 1
 
@@ -114,7 +113,7 @@ def create_vec_env(n_envs: int, enemy_path: str = None, enemy_id: int = 1, devic
     return env
 
 
-def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptive: bool = True, eval_freq: int = 1, net_arch: int = 256):
+def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptive: bool = True, eval_freq: int = 1, net_arch: int = 256):
     device = get_device(force_cpu)
     print(f"Using device: {device}")
     print(f"Network architecture: [{net_arch}, {net_arch}]")
@@ -131,7 +130,7 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptiv
     # Model name suffix based on architecture
     arch_suffix = f"_{net_arch}" if net_arch != 256 else ""
 
-    for i in range(1, 100000):
+    for i in range(0, 100000):
         print("Training model_" + str(i))
         user = 'up' if i % 2 == 0 else 'down'
 
@@ -150,8 +149,7 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptiv
                 print(f"Enemy model {arch_suffix} not found, using default model: {enemy_path_fallback}")
                 enemy_path = enemy_path_fallback
             else:
-                print(f"No enemy model found, training without enemy")
-                enemy_path = None
+                raise FileNotFoundError("No enemy model found (512 or default).")
 
         # Create vector env; pass enemy_path so each worker can load it locally.
         # Load enemy model inside workers on CPU to avoid multiple CUDA contexts
@@ -169,19 +167,28 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptiv
         try:
             model = MaskablePPO.load(model_path, env=env, custom_objects=custom_objects, device=device)
             model.verbose = 1
+            # Optimize hyperparameters based on network size
             model.ent_coef = 0.08
             model.learning_rate = 5e-4
             print(f"Loaded existing model: {model_path} (Continuing training)")
         except Exception:
             print(f"No previous model found at {model_path}, training from scratch")
             policy_kwargs = {"net_arch": {"pi": [net_arch, net_arch], "vf": [net_arch, net_arch]}}
+            
+            # Optimize hyperparameters based on network size
+            batch_size = 8192  # Larger batches for larger networks
+            learning_rate = 3e-4  # Slightly conservative
+            ent_coef = 0.05  # Lower entropy for focused learning
+            clip_range = 0.15  # Tighter clipping
+            
             model = MaskablePPO(
                 "MultiInputPolicy",
                 env,
                 verbose=1,
-                batch_size=4096,
-                learning_rate=5e-4,
-                ent_coef=0.08,
+                batch_size=batch_size,
+                learning_rate=learning_rate,
+                ent_coef=ent_coef,
+                clip_range=clip_range,
                 n_steps=8192,
                 policy_kwargs=policy_kwargs,
                 device=device,
@@ -223,19 +230,19 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptiv
                     # Adjust timesteps based on performance
                     # If a model is underperforming (< 40% win rate), increase its training time
                     if up_win_rate < 0.40:
-                        up_timesteps = int(base_timesteps * 1.5)
+                        up_timesteps = int(base_timesteps * 2)
                         print(f"UP model underperforming ({up_win_rate*100:.1f}%), increasing timesteps to {up_timesteps:,}")
                     elif up_win_rate > 0.60:
-                        up_timesteps = int(base_timesteps * 0.8)
+                        up_timesteps = int(base_timesteps * 0.5)
                         print(f"UP model overperforming ({up_win_rate*100:.1f}%), decreasing timesteps to {up_timesteps:,}")
                     else:
                         up_timesteps = base_timesteps
                     
                     if down_win_rate < 0.40:
-                        down_timesteps = int(base_timesteps * 1.5)
+                        down_timesteps = int(base_timesteps * 2)
                         print(f"DOWN model underperforming ({down_win_rate*100:.1f}%), increasing timesteps to {down_timesteps:,}")
                     elif down_win_rate > 0.60:
-                        down_timesteps = int(base_timesteps * 0.8)
+                        down_timesteps = int(base_timesteps * 0.5)
                         print(f"DOWN model overperforming ({down_win_rate*100:.1f}%), decreasing timesteps to {down_timesteps:,}")
                     else:
                         down_timesteps = base_timesteps
@@ -250,7 +257,7 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptiv
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true", help="Run a short quick training iteration for smoke test")
-    parser.add_argument("--n_envs", type=int, default=64)
+    parser.add_argument("--n_envs", type=int, default=48)
     parser.add_argument("--cpu", action="store_true", help="Force CPU even if CUDA available")
     parser.add_argument("--force-dummy", action="store_true", help="Force DummyVecEnv instead of SubprocVecEnv (improves GPU throughput)")
     parser.add_argument("--no-adaptive", action="store_true", help="Disable adaptive training (fixed timesteps)")
