@@ -24,6 +24,60 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMoni
 from MiniChessEnv import MiniChessEnv
 
 
+def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: str = "cpu"):
+    """
+    Evaluate two models against each other.
+    Returns (up_wins, down_wins, draws)
+    """
+    # Load models
+    try:
+        up_model = MaskablePPO.load(up_path, device=device)
+        down_model = MaskablePPO.load(down_path, device=device)
+    except Exception as e:
+        print(f"Failed to load models for evaluation: {e}")
+        return None, None, None
+
+    up_wins = 0
+    down_wins = 0
+    draws = 0
+
+    for _ in range(n_episodes):
+        env = gym.make("MiniChess-v0")
+        env = ActionMasker(env, lambda e: e.unwrapped.get_valid_actions())
+        obs, info = env.reset()
+        done = False
+        truncated = False
+
+        while not (done or truncated):
+            current_player = env.unwrapped.current_player
+            model = up_model if current_player == 0 else down_model
+
+            action_masks = env.unwrapped.get_valid_actions()
+            action, _ = model.predict(obs, action_masks=action_masks, deterministic=False)
+            obs, reward, done, truncated, info = env.step(action)
+
+        # Check who won based on final reward
+        if done:
+            if reward > 0:  # Current player at end won
+                if env.unwrapped.current_player == 0:
+                    up_wins += 1
+                else:
+                    down_wins += 1
+            elif reward < 0:  # Current player at end lost
+                if env.unwrapped.current_player == 0:
+                    down_wins += 1
+                else:
+                    up_wins += 1
+            else:
+                draws += 1
+        else:
+            draws += 1
+
+        env.close()
+
+    return up_wins, down_wins, draws
+
+
 def make_env_fn(enemy_path: str = None, enemy_id: int = 1, device: str = "cpu"):
     def _init():
         env = gym.make("MiniChess-v0")
@@ -60,13 +114,22 @@ def create_vec_env(n_envs: int, enemy_path: str = None, enemy_id: int = 1, devic
     return env
 
 
-def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False):
+def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False, adaptive: bool = True, eval_freq: int = 1, net_arch: int = 256):
     device = get_device(force_cpu)
     print(f"Using device: {device}")
+    print(f"Network architecture: [{net_arch}, {net_arch}]")
 
     # small quick mode for smoke test
-    up_timesteps = 500_000 if not quick else 2_000
-    down_timesteps = 500_000 if not quick else 2_000
+    base_timesteps = 500_000 if not quick else 2_000
+    up_timesteps = base_timesteps
+    down_timesteps = base_timesteps
+    
+    # Track performance history
+    up_win_rate = 0.5  # Start at 50% assumed
+    down_win_rate = 0.5
+    
+    # Model name suffix based on architecture
+    arch_suffix = f"_{net_arch}" if net_arch != 256 else ""
 
     for i in range(1, 100000):
         print("Training model_" + str(i))
@@ -79,12 +142,16 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False):
             "lr_schedule": lambda _: 2.5e-4,
         }
         # prepare enemy model path; worker processes will load the model themselves
-        enemy_path = None
-        try:
-            # check existence by attempting to load; if load fails, we still pass path and let worker attempt
-            enemy_path = f"./models/model_{enemy}.zip"
-        except Exception:
-            enemy_path = None
+        enemy_path = f"./models/model_{enemy}{arch_suffix}.zip"
+        if not os.path.exists(enemy_path):
+            # Fallback to default model (256) if specific arch not found
+            enemy_path_fallback = f"./models/model_{enemy}.zip"
+            if os.path.exists(enemy_path_fallback):
+                print(f"Enemy model {arch_suffix} not found, using default model: {enemy_path_fallback}")
+                enemy_path = enemy_path_fallback
+            else:
+                print(f"No enemy model found, training without enemy")
+                enemy_path = None
 
         # Create vector env; pass enemy_path so each worker can load it locally.
         # Load enemy model inside workers on CPU to avoid multiple CUDA contexts
@@ -97,24 +164,24 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False):
             force_dummy= False,
         )
 
-        model_path = f"./models/model_{user}.zip"
+        model_path = f"./models/model_{user}{arch_suffix}.zip"
 
         try:
             model = MaskablePPO.load(model_path, env=env, custom_objects=custom_objects, device=device)
             model.verbose = 1
-            model.ent_coef = 0.01
-            model.learning_rate = 2.5e-4
+            model.ent_coef = 0.08
+            model.learning_rate = 5e-4
             print(f"Loaded existing model: {model_path} (Continuing training)")
         except Exception:
             print(f"No previous model found at {model_path}, training from scratch")
-            policy_kwargs = {"net_arch": {"pi": [256, 256], "vf": [256, 256]}}
+            policy_kwargs = {"net_arch": {"pi": [net_arch, net_arch], "vf": [net_arch, net_arch]}}
             model = MaskablePPO(
                 "MultiInputPolicy",
                 env,
                 verbose=1,
                 batch_size=4096,
-                learning_rate=2.5e-4,
-                ent_coef=0.01,
+                learning_rate=5e-4,
+                ent_coef=0.08,
                 n_steps=8192,
                 policy_kwargs=policy_kwargs,
                 device=device,
@@ -136,6 +203,46 @@ def main(quick: bool = False, n_envs: int = 64, force_cpu: bool = False):
 
         env.close()
 
+        # Adaptive training: evaluate and adjust timesteps
+        if adaptive and i > 1 and i % eval_freq == 0:
+            print("\n=== Evaluating models ===")
+            up_path = f"./models/model_up{arch_suffix}.zip"
+            down_path = f"./models/model_down{arch_suffix}.zip"
+            
+            # Check if both models exist
+            if os.path.exists(up_path) and os.path.exists(down_path):
+                up_wins, down_wins, draws = evaluate_models(up_path, down_path, n_episodes=30, device=device)
+                
+                if up_wins is not None:
+                    total = up_wins + down_wins + draws
+                    up_win_rate = up_wins / total if total > 0 else 0.5
+                    down_win_rate = down_wins / total if total > 0 else 0.5
+                    
+                    print(f"Evaluation results: UP {up_wins}/{total} ({up_win_rate*100:.1f}%) | DOWN {down_wins}/{total} ({down_win_rate*100:.1f}%) | Draws {draws}")
+                    
+                    # Adjust timesteps based on performance
+                    # If a model is underperforming (< 40% win rate), increase its training time
+                    if up_win_rate < 0.40:
+                        up_timesteps = int(base_timesteps * 1.5)
+                        print(f"UP model underperforming ({up_win_rate*100:.1f}%), increasing timesteps to {up_timesteps:,}")
+                    elif up_win_rate > 0.60:
+                        up_timesteps = int(base_timesteps * 0.8)
+                        print(f"UP model overperforming ({up_win_rate*100:.1f}%), decreasing timesteps to {up_timesteps:,}")
+                    else:
+                        up_timesteps = base_timesteps
+                    
+                    if down_win_rate < 0.40:
+                        down_timesteps = int(base_timesteps * 1.5)
+                        print(f"DOWN model underperforming ({down_win_rate*100:.1f}%), increasing timesteps to {down_timesteps:,}")
+                    elif down_win_rate > 0.60:
+                        down_timesteps = int(base_timesteps * 0.8)
+                        print(f"DOWN model overperforming ({down_win_rate*100:.1f}%), decreasing timesteps to {down_timesteps:,}")
+                    else:
+                        down_timesteps = base_timesteps
+                else:
+                    print("Evaluation failed, using base timesteps")
+            print("=== Evaluation complete ===\n")
+
         if quick:
             break
 
@@ -146,5 +253,8 @@ if __name__ == "__main__":
     parser.add_argument("--n_envs", type=int, default=64)
     parser.add_argument("--cpu", action="store_true", help="Force CPU even if CUDA available")
     parser.add_argument("--force-dummy", action="store_true", help="Force DummyVecEnv instead of SubprocVecEnv (improves GPU throughput)")
+    parser.add_argument("--no-adaptive", action="store_true", help="Disable adaptive training (fixed timesteps)")
+    parser.add_argument("--eval-freq", type=int, default=1, help="Evaluate models every N cycles (default: 1)")
+    parser.add_argument("--net-arch", type=int, default=256, choices=[128, 256, 512, 1024], help="Neural network size (default: 256)")
     args = parser.parse_args()
-    main(quick=args.quick, n_envs=args.n_envs, force_cpu=args.cpu)
+    main(quick=args.quick, n_envs=args.n_envs, force_cpu=args.cpu, adaptive=not args.no_adaptive, eval_freq=args.eval_freq, net_arch=args.net_arch)

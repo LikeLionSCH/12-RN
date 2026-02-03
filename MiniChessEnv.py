@@ -72,7 +72,7 @@ class MiniChessEnv(gym.Env):
         self.board[5, 4, 1] = 1  # 하단 자 배치 / id: 5
         self.board[6, 5, 0] = 1  # 하단 상 배치 / id: 6
         self.board[7, 5, 1] = 1  # 하단 왕 배치 / id: 7
-        self.board[8, 5, 2] = 1  # 상단 장 배치 / id: 8
+        self.board[8, 5, 2] = 1  # 하단 장 배치 / id: 8
         # 하단 후 / id: 9
         
         # 차례 정보 초기화 (0번 플레이어부터 시작)
