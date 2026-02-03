@@ -29,10 +29,8 @@ env.unwrapped.set_test_mode(True)  # 테스트 모드 활성화
 env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 
 # MaskablePPO 모델 로드 (각 모델이 플레이어 차례에 따라 사용됨)
-model_up = MaskablePPO.load("./model_up.zip")  # 예: 플레이어 0
-model_down = MaskablePPO.load("./model_down.zip")  # 예: 플레이어 1
-new_model_up = MaskablePPO.load("./new_model_up.zip")  # 예: 플레이어 0
-new_model_down = MaskablePPO.load("./new_model_down.zip")  # 예: 플레이어 1
+model_up = MaskablePPO.load("./models/model_up.zip")  # 예: 플레이어 0
+model_down = MaskablePPO.load("./models/model_down.zip")  # 예: 플레이어 1
 
 # 요청 바디 데이터 모델 정의
 class InputObservation(BaseModel):
@@ -53,7 +51,6 @@ def predict_next_move(data: InputObservation):
     전달받은 보드 상태와 차례를 환경에 반영한 후,
     해당 차례에 맞는 모델로 예측하고 한 스텝 진행 후 결과를 반환합니다.
     """
-    is_new = data.is_new
     # 먼저 reset을 호출하여 환경을 초기화함
     obs, info = env.reset()
     # API에서 받은 데이터를 환경에 적용
@@ -65,26 +62,14 @@ def predict_next_move(data: InputObservation):
     action_mask = env.unwrapped.get_valid_actions()
     
     # 현재 차례에 따라 모델 선택 및 예측
-    if data.turn == 0 and is_new == False:
+    if data.turn == 0:
         action, _states = model_up.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
             deterministic=True
         )
-    elif data.turn == 1 and is_new == False:
+    elif data.turn == 1:
         action, _states = model_down.predict(
-            {"board": env.unwrapped.board, "turn": data.turn},
-            action_masks=action_mask,
-            deterministic=True
-        )
-    elif data.turn == 0 and is_new:
-        action, _states = new_model_up.predict(
-            {"board": env.unwrapped.board, "turn": data.turn},
-            action_masks=action_mask,
-            deterministic=True
-        )
-    elif data.turn == 1 and is_new:
-        action, _states = new_model_down.predict(
             {"board": env.unwrapped.board, "turn": data.turn},
             action_masks=action_mask,
             deterministic=True

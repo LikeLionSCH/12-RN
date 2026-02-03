@@ -1,5 +1,9 @@
 import gymnasium as gym
 from sb3_contrib import MaskablePPO
+import torch
+
+# 자동 디바이스 선택
+device = "cuda" if torch.cuda.is_available() else "cpu"
 from sb3_contrib.common.wrappers import ActionMasker
 
 from MiniChessEnv import MiniChessEnv
@@ -31,29 +35,27 @@ for i in range(1, 100000):
     model_path = "./model_" + str(user)
 
     try:
-        model = MaskablePPO.load(model_path, env=env, custom_objects=custom_objects)
+        model = MaskablePPO.load(model_path, env=env, custom_objects=custom_objects, device=device)
         model.verbose = 1
-        model.ent_coef = 0.5
-        model.gamma = 0.99  # 미래 보상 반영 증가
-        model.learning_rate = 0.001 # 조금 더 적극적인 학습 하도록
+        model.ent_coef = 0.01
+        model.gamma = 0.99
+        model.learning_rate = 2.5e-4
         print(f"Loaded existing model: {model_path} (Continuing training)")
-    except FileNotFoundError:
+    except Exception:
         print(f"No previous model found at {model_path}, training from scratch")
         model = MaskablePPO(
-            "MultiInputPolicy", 
+            "MultiInputPolicy",
             env,
             verbose=1,
-            batch_size=1024,  # 기존 유지
-            learning_rate=0.01,
-            ent_coef=0.5,  # 기존 0.2 → 0.5 (탐색 강화)
-            n_steps=2048,  # 더 긴 학습 루프
-            clip_range=0.2, # 기존 유지
+            batch_size=512,
+            learning_rate=2.5e-4,
+            ent_coef=0.01,
+            n_steps=2048,
+            clip_range=0.2,
             policy_kwargs={
-               "net_arch": {
-                   "pi": [256, 256, 256, 256],  # actor network
-                   "vf": [256, 256, 256, 256]   # critic network
-               }
-           }
+                "net_arch": [{"pi": [256, 256], "vf": [256, 256]}]
+            },
+            device=device
         )
 
     # 추가 학습

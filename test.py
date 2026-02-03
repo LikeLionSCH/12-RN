@@ -13,11 +13,11 @@ env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 
 
 # MaskablePPO 모델 불러오기
-model_up = MaskablePPO.load("./new_model_up")
-model_down = MaskablePPO.load("./new_model_down")
+model_up = MaskablePPO.load("./models/model_up")
+model_down = MaskablePPO.load("./models/model_down")
 
 ## 모델 테스트
-num_episodes = 10  # 테스트할 에피소드 수
+num_episodes = 100  # 테스트할 에피소드 수
 
 # 승리 횟수 추적 변수 추가
 wins_model_up = 0
