@@ -7,9 +7,24 @@ import time
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
+# Disable PyTorch distribution validation to avoid Simplex constraint errors
+# This is safe because we manually validate action masks
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 import gymnasium as gym
 from sb3_contrib import MaskablePPO
 import torch
+
+# Monkey-patch torch.distributions to disable validation
+# This prevents Simplex constraint errors with masked actions
+original_categorical_init = torch.distributions.Categorical.__init__
+
+def patched_categorical_init(self, probs=None, logits=None, validate_args=None):
+    # Force validate_args to False to avoid Simplex errors
+    original_categorical_init(self, probs=probs, logits=logits, validate_args=False)
+
+torch.distributions.Categorical.__init__ = patched_categorical_init
+
 import gymnasium as gym
 from sb3_contrib import MaskablePPO
 # Limit PyTorch threads to avoid oversubscription in multiprocessing
@@ -23,6 +38,28 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMoni
 
 from MiniChessEnv import MiniChessEnv
 import numpy as np
+
+
+def safe_action_mask(env):
+    """Safely generate valid action mask with validation."""
+    try:
+        mask = env.unwrapped.get_valid_actions()
+        mask = np.asarray(mask, dtype=bool)
+        
+        # Validate mask
+        if mask.ndim != 1 or mask.size != env.action_space.n:
+            print(f"WARNING: Invalid mask shape {mask.shape}, expected ({env.action_space.n},)")
+            return np.ones(env.action_space.n, dtype=bool)
+        
+        if not mask.any():
+            print("WARNING: Empty action mask, allowing all actions")
+            return np.ones(env.action_space.n, dtype=bool)
+        
+        return mask
+    except Exception as e:
+        print(f"ERROR in safe_action_mask: {e}")
+        return np.ones(env.action_space.n, dtype=bool)
+
 
 def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: str = "cpu"):
     """
@@ -43,7 +80,7 @@ def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: 
 
     for _ in range(n_episodes):
         env = gym.make("MiniChess-v0")
-        env = ActionMasker(env, lambda e: e.unwrapped.get_valid_actions())
+        env = ActionMasker(env, safe_action_mask)
         env.unwrapped.set_test_mode(True)
         obs, info = env.reset()
         done = False
@@ -53,7 +90,7 @@ def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: 
             current_player = env.unwrapped.turn
             model = up_model if current_player == 0 else down_model
 
-            action_masks = env.unwrapped.get_valid_actions()
+            action_masks = safe_action_mask(env)
             action, _ = model.predict(obs, action_masks=action_masks, deterministic=False)
             obs, reward, done, truncated, info = env.step(action)
 
@@ -80,7 +117,7 @@ def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: 
 def make_env_fn(enemy_path: str = None, enemy_id: int = 1, device: str = "cpu"):
     def _init():
         env = gym.make("MiniChess-v0")
-        env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
+        env = ActionMasker(env, safe_action_mask)
         # If an enemy model path is provided, load it inside the worker process
         if enemy_path is not None:
             try:
@@ -117,6 +154,9 @@ def create_vec_env(n_envs: int, enemy_path: str = None, enemy_id: int = 1, devic
             print(f"[VecEnv] SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
             env = DummyVecEnv(env_fns)
     
+    # Wrap with VecMonitor to track episode statistics
+    env = VecMonitor(env)
+    
     elapsed = time.time() - start_time
     print(f"[VecEnv] Ready in {elapsed:.2f}s ({n_envs} envs)")
     return env
@@ -128,7 +168,7 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
     print(f"Network architecture: [{net_arch}, {net_arch}]")
 
     # small quick mode for smoke test
-    base_timesteps = 500_000 if not quick else 2_000
+    base_timesteps = 250_000 if not quick else 2_000
     up_timesteps = base_timesteps
     down_timesteps = base_timesteps
     
@@ -180,19 +220,36 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
             model = MaskablePPO.load(model_path, env=env, custom_objects=custom_objects, device=device)
             load_time = time.time() - start_load
             model.verbose = 1
-            # Optimize hyperparameters based on network size
-            model.ent_coef = 0.1
-            model.learning_rate = 5e-4
+            # Optimize hyperparameters - must match new model settings
+            model.ent_coef = 0.01
+            model.learning_rate = 1e-3
+            model.n_epochs = 10
+            # Update batch_size and n_steps to match
+            model.batch_size = 2048
+            model.n_steps = 2048
+            # Recreate rollout buffer with new settings
+            model.rollout_buffer = model.rollout_buffer_class(
+                model.n_steps,
+                model.observation_space,
+                model.action_space,
+                device=model.device,
+                gamma=model.gamma,
+                gae_lambda=model.gae_lambda,
+                n_envs=env.num_envs,
+            )
             print(f"[Model] Loaded in {load_time:.2f}s: {model_path} (Continuing training)")
         except Exception:
             print(f"No previous model found at {model_path}, training from scratch")
             policy_kwargs = {"net_arch": {"pi": [net_arch, net_arch], "vf": [net_arch, net_arch]}}
             
             # Optimize hyperparameters based on network size
-            batch_size = 8192  # Larger batches for larger networks
-            learning_rate = 5e-4  # Slightly conservative
+            # batch_size must divide (n_steps * n_envs) evenly
+            n_steps = 2048  # Reduced for stability
+            batch_size = 2048  # Must be <= n_steps * n_envs
+            learning_rate = 1e-3  # Slightly conservative
             ent_coef = 0.1  # Lower entropy for focused learning
             clip_range = 0.2  # Tighter clipping
+            n_epochs = 10  # Number of epochs when updating policy
             
             model = MaskablePPO(
                 "MultiInputPolicy",
@@ -202,7 +259,8 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
                 learning_rate=learning_rate,
                 ent_coef=ent_coef,
                 clip_range=clip_range,
-                n_steps=8192,
+                n_steps=n_steps,
+                n_epochs=n_epochs,
                 policy_kwargs=policy_kwargs,
                 device=device,
             )

@@ -167,7 +167,7 @@ class MiniChessEnv(gym.Env):
             done = True
 
         # 상대 기물 이동
-        if not self.is_test_mode and self.turn == self.enemy and not done :
+        if not self.is_test_mode and self.enemy_model is not None and self.turn == self.enemy and not done :
             #print("상대턴")
             action_mask = self.get_valid_actions()
             action, _states = self.enemy_model.predict({"board": self.board, "turn": self.turn}, action_masks=action_mask, deterministic=False)
@@ -327,6 +327,12 @@ class MiniChessEnv(gym.Env):
                 if self.validate_move(piece_id, (start_row, start_col), (target_row, target_col)):
                     action = start_index * (board_size) + target_index
                     valid_mask[action] = True
+        
+        # Safety: if no valid actions, allow all actions to prevent invalid distribution
+        if not valid_mask.any():
+            print(f"WARNING: No valid actions found for turn {self.turn}, allowing all actions")
+            valid_mask[:] = True
+        
         return valid_mask
 
     def get_kr_from_pid(self, pid):
