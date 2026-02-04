@@ -221,8 +221,8 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
             load_time = time.time() - start_load
             model.verbose = 1
             # Optimize hyperparameters - must match new model settings
-            model.ent_coef = 0.01
-            model.learning_rate = 1e-3
+            model.ent_coef = 0.05  # Increased from 0.01 for more exploration
+            model.learning_rate = 5e-4  # Reduced from 1e-3 for stability
             model.n_epochs = 10
             # Update batch_size and n_steps to match
             model.batch_size = 2048
@@ -246,8 +246,8 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
             # batch_size must divide (n_steps * n_envs) evenly
             n_steps = 2048  # Reduced for stability
             batch_size = 2048  # Must be <= n_steps * n_envs
-            learning_rate = 1e-3  # Slightly conservative
-            ent_coef = 0.1  # Lower entropy for focused learning
+            learning_rate = 5e-4  # Balanced for stability and learning
+            ent_coef = 0.05  # Balanced entropy for exploration vs exploitation
             clip_range = 0.2  # Tighter clipping
             n_epochs = 10  # Number of epochs when updating policy
             
