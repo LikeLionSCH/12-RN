@@ -13,7 +13,7 @@ env = ActionMasker(env, lambda env: env.unwrapped.get_valid_actions())
 
 
 # MaskablePPO 모델 불러오기
-model_up = MaskablePPO.load("./models/model_up")
+model_up = MaskablePPO.load("./models/model_up_512")
 model_down = MaskablePPO.load("./models/model_down")
 
 ## 모델 테스트

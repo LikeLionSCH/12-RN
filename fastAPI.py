@@ -34,8 +34,8 @@ except Exception as e:
 
 # MaskablePPO 모델 로드 (각 모델이 플레이어 차례에 따라 사용됨)
 try:
-    model_up = MaskablePPO.load("./models/model_up.zip")  # 예: 플레이어 0
-    model_down = MaskablePPO.load("./models/model_down.zip")  # 예: 플레이어 1
+    model_up = MaskablePPO.load("./models/model_up_512.zip")  # 예: 플레이어 0
+    model_down = MaskablePPO.load("./models/model_down_512.zip")  # 예: 플레이어 1
 except Exception as e:
     print(f"Model load error: {e}")
     model_up = None
@@ -110,7 +110,7 @@ def predict_next_move(data: InputObservation):
     target_row, target_col = divmod(target_index, 3)
     piece_id = env.unwrapped.get_piece_id(start_row, start_col)
     
-    print(f"[DEBUG] board state before action:\n{env.unwrapped.board}")
+    #print(f"[DEBUG] board state before action:\n{env.unwrapped.board}")
     print(f"[DEBUG] turn={data.turn}, action={action}, piece_id={piece_id}, from=({start_row},{start_col}), to=({target_row},{target_col})")
     
     # 예측한 행동을 환경에 적용

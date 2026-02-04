@@ -22,7 +22,7 @@ from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
 
 from MiniChessEnv import MiniChessEnv
-
+import numpy as np
 
 def evaluate_models(up_path: str, down_path: str, n_episodes: int = 30, device: str = "cpu"):
     """
@@ -84,10 +84,12 @@ def make_env_fn(enemy_path: str = None, enemy_id: int = 1, device: str = "cpu"):
         # If an enemy model path is provided, load it inside the worker process
         if enemy_path is not None:
             try:
+                # Use faster device temporarily for loading (CPU faster for parallel loads)
                 enemy_model = MaskablePPO.load(enemy_path, device=device)
                 env.unwrapped.set_enemy_env(enemy_model, enemy=enemy_id)
-            except Exception:
-                pass
+            except Exception as e:
+                import sys
+                print(f"[Worker Error] Failed to load enemy model: {e}", file=sys.stderr)
         return env
 
     return _init
@@ -100,16 +102,23 @@ def get_device(force_cpu: bool = False):
 
 
 def create_vec_env(n_envs: int, enemy_path: str = None, enemy_id: int = 1, device: str = "cpu", force_dummy: bool = False):
+    print(f"[VecEnv] Initializing {n_envs} parallel environments...")
+    import time
+    start_time = time.time()
+    
     env_fns = [make_env_fn(enemy_path=enemy_path, enemy_id=enemy_id, device=device) for _ in range(n_envs)]
     if force_dummy:
         env = DummyVecEnv(env_fns)
     else:
         try:
-            env = SubprocVecEnv(env_fns)
-        except Exception:
+            # SubprocVecEnv will load models in parallel across workers
+            env = SubprocVecEnv(env_fns, start_method='spawn')
+        except Exception as e:
+            print(f"[VecEnv] SubprocVecEnv failed ({e}), falling back to DummyVecEnv")
             env = DummyVecEnv(env_fns)
-    # Wrap with VecMonitor so episode reward/length statistics are logged
-    env = VecMonitor(env)
+    
+    elapsed = time.time() - start_time
+    print(f"[VecEnv] Ready in {elapsed:.2f}s ({n_envs} envs)")
     return env
 
 
@@ -165,21 +174,25 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
         model_path = f"./models/model_{user}{arch_suffix}.zip"
 
         try:
+            print(f"[Model] Loading {model_path}...")
+            import time
+            start_load = time.time()
             model = MaskablePPO.load(model_path, env=env, custom_objects=custom_objects, device=device)
+            load_time = time.time() - start_load
             model.verbose = 1
             # Optimize hyperparameters based on network size
-            model.ent_coef = 0.08
+            model.ent_coef = 0.1
             model.learning_rate = 5e-4
-            print(f"Loaded existing model: {model_path} (Continuing training)")
+            print(f"[Model] Loaded in {load_time:.2f}s: {model_path} (Continuing training)")
         except Exception:
             print(f"No previous model found at {model_path}, training from scratch")
             policy_kwargs = {"net_arch": {"pi": [net_arch, net_arch], "vf": [net_arch, net_arch]}}
             
             # Optimize hyperparameters based on network size
             batch_size = 8192  # Larger batches for larger networks
-            learning_rate = 3e-4  # Slightly conservative
-            ent_coef = 0.05  # Lower entropy for focused learning
-            clip_range = 0.15  # Tighter clipping
+            learning_rate = 5e-4  # Slightly conservative
+            ent_coef = 0.1  # Lower entropy for focused learning
+            clip_range = 0.2  # Tighter clipping
             
             model = MaskablePPO(
                 "MultiInputPolicy",
