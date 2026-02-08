@@ -85,7 +85,7 @@ def predict_next_move(data: InputObservation):
         action, _states = model_up.predict(
             obs_dict,
             action_masks=action_mask,
-            deterministic=True
+            deterministic=False
         )
     elif data.turn == 1:
         # Turn 1: 하단 플레이어 (모델_down)
@@ -93,7 +93,7 @@ def predict_next_move(data: InputObservation):
         action, _states = model_down.predict(
             obs_dict,
             action_masks=action_mask,
-            deterministic=True
+            deterministic=False
         )
     else:
         return {"error": f"Invalid turn: {data.turn}"}

@@ -162,13 +162,13 @@ def create_vec_env(n_envs: int, enemy_path: str = None, enemy_id: int = 1, devic
     return env
 
 
-def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptive: bool = True, eval_freq: int = 1, net_arch: int = 256):
+def main(quick: bool = False, n_envs: int = 80, force_cpu: bool = False, adaptive: bool = True, eval_freq: int = 1, net_arch: int = 256):
     device = get_device(force_cpu)
     print(f"Using device: {device}")
     print(f"Network architecture: [{net_arch}, {net_arch}]")
 
     # small quick mode for smoke test
-    base_timesteps = 250_000 if not quick else 2_000
+    base_timesteps = 2_500_000 if not quick else 2_000
     up_timesteps = base_timesteps
     down_timesteps = base_timesteps
     
@@ -221,8 +221,8 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
             load_time = time.time() - start_load
             model.verbose = 1
             # Optimize hyperparameters - must match new model settings
-            model.ent_coef = 0.05  # Increased from 0.01 for more exploration
-            model.learning_rate = 5e-4  # Reduced from 1e-3 for stability
+            model.ent_coef = 0.01  # Increased from 0.01 for more exploration
+            model.learning_rate = 1e-4  # Reduced from 1e-3 for stability
             model.n_epochs = 10
             # Update batch_size and n_steps to match
             model.batch_size = 2048
@@ -328,7 +328,7 @@ def main(quick: bool = False, n_envs: int = 48, force_cpu: bool = False, adaptiv
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true", help="Run a short quick training iteration for smoke test")
-    parser.add_argument("--n_envs", type=int, default=48)
+    parser.add_argument("--n_envs", type=int, default=80)
     parser.add_argument("--cpu", action="store_true", help="Force CPU even if CUDA available")
     parser.add_argument("--force-dummy", action="store_true", help="Force DummyVecEnv instead of SubprocVecEnv (improves GPU throughput)")
     parser.add_argument("--no-adaptive", action="store_true", help="Disable adaptive training (fixed timesteps)")
