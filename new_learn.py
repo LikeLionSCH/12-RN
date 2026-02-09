@@ -168,7 +168,7 @@ def main(quick: bool = False, n_envs: int = 80, force_cpu: bool = False, adaptiv
     print(f"Network architecture: [{net_arch}, {net_arch}]")
 
     # small quick mode for smoke test
-    base_timesteps = 2_500_000 if not quick else 2_000
+    base_timesteps = 500_000 if not quick else 2_000
     up_timesteps = base_timesteps
     down_timesteps = base_timesteps
     
@@ -179,7 +179,7 @@ def main(quick: bool = False, n_envs: int = 80, force_cpu: bool = False, adaptiv
     # Model name suffix based on architecture
     arch_suffix = f"_{net_arch}" if net_arch != 256 else ""
 
-    for i in range(0, 100000):
+    for i in range(1, 100000):
         print("Training model_" + str(i))
         user = 'up' if i % 2 == 0 else 'down'
 
